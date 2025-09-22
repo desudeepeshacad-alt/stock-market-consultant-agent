@@ -34,21 +34,31 @@ class PathwayClient:
         print(f"\n[Pathway] Connecting to live market feed for: {tickers}...")
         live_data = {}
         try:
-            session = yf.Ticker("MSFT").session
-            ticker_data = yf.Tickers(tickers, session=session)
-            history = yf.download(tickers, period="3mo", progress=False, session=session)
+            history = yf.download(tickers, period="3mo", progress=False)
+            
             for ticker_str in tickers:
-                ticker = ticker_data.tickers[ticker_str]
-                info = ticker.info
+                info = yf.Ticker(ticker_str).info
                 if not info or 'currentPrice' not in info or info.get('currentPrice') is None:
                     print(f"[Pathway] WARNING: Could not fetch live info for {ticker_str}.")
                     continue
-                try:
-                    ticker_history = history[('Close', ticker_str)] if len(tickers) > 1 else history['Close']
-                except KeyError:
+
+                # --- THIS IS THE DEFINITIVE FIX ---
+                # This logic now correctly handles the data structure whether 
+                # yfinance returns data for one ticker or many.
+                if len(tickers) == 1:
+                    # When one ticker is requested, the DataFrame columns are simple
+                    ticker_history = history['Close']
+                else:
+                    # When multiple tickers are requested, the columns are multi-level
+                    ticker_history = history['Close'][ticker_str]
+                
+                if ticker_history.empty:
                     print(f"[Pathway] WARNING: Could not fetch historical data for {ticker_str}.")
                     continue
+                # --- END OF FIX ---
+
                 rsi = self._calculate_rsi(ticker_history)
+                
                 live_data[ticker_str] = {
                     "price": info.get('currentPrice', 0),
                     "change_percent": ((info.get('currentPrice', 0) - info.get('previousClose', 1)) / info.get('previousClose', 1)) * 100,
@@ -65,7 +75,7 @@ class PathwayClient:
             print(f"[Pathway] ERROR: Failed to fetch live data. Error: {e}")
             return {}
 
-# --- 2. Analysis Engine (with RSI and MA logic) ---
+# --- The rest of the app.py file is unchanged... ---
 class AnalysisEngine:
     def generate_advice(self, portfolio: list[dict], live_data: dict, risk_profile: str) -> list[str]:
         advice_list = []
@@ -148,11 +158,9 @@ class AnalysisEngine:
         else:
             return "✅ **Good Diversification:** Your portfolio appears to be well-diversified."
 
-# --- Instantiate Core Components ---
 pathway = PathwayClient()
 engine = AnalysisEngine()
 
-# --- 3. Flask Routes ---
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -199,6 +207,5 @@ def analyse_portfolio():
         print(f"An error occurred during analysis: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
-# --- 4. Main Execution Block ---
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
