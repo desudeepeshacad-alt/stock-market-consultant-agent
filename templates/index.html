@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ROBUST Portfolio Analyser</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://kit.fontawesome.com/a7d8f99e8d.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --bg-color: #f0f4f8;
+            --surface-color: #ffffff;
+            --primary-color: #1a3b5d;
+            --secondary-color: #007bff;
+            --accent-green: #28a745;
+            --accent-red: #dc3545;
+            --text-primary: #1a3b5d;
+            --text-secondary: #5a7184;
+            --border-color: #e2e8f0;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 40px 15px;
+        }
+        .container {
+            background-color: var(--surface-color);
+            padding: 30px 40px;
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            width: 100%;
+            max-width: 900px;
+            border: 1px solid var(--border-color);
+        }
+        h1, h2, h3 {
+            color: var(--text-primary);
+            text-align: center;
+            font-weight: 700;
+        }
+        h1 { font-size: 2em; margin-bottom: 25px; }
+        h1 i { color: var(--secondary-color); }
+        h3 { font-size: 1.25em; border-bottom: 2px solid var(--border-color); padding-bottom: 10px; margin-top: 30px; }
+        .stock-entry {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 30px;
+            gap: 15px;
+            align-items: end;
+            margin-bottom: 15px;
+        }
+        label { margin-bottom: 8px; color: var(--text-secondary); font-size: 14px; font-weight: 600; }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input:focus {
+            outline: none;
+            border-color: var(--secondary-color);
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+        }
+        button {
+            padding: 12px;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .remove-btn {
+            background-color: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            font-size: 18px;
+            padding: 0;
+        }
+        .remove-btn:hover { background-color: #f8d7da; color: var(--accent-red); }
+        .action-buttons { display: flex; gap: 15px; margin-top: 25px; border-top: 1px solid var(--border-color); padding-top: 25px; }
+        #addStockBtn { background-color: var(--accent-green); }
+        #addStockBtn:hover { background-color: #218838; transform: translateY(-2px); }
+        #analyseBtn { background-color: var(--secondary-color); }
+        #analyseBtn:hover { background-color: #0056b3; transform: translateY(-2px); }
+        #analyseBtn:disabled { background-color: #555; cursor: not-allowed; transform: none; }
+        #output-block { display: none; margin-top: 40px; }
+        .loader { width: 50px; height: 50px; border: 5px solid var(--bg-color); border-top: 5px solid var(--secondary-color); border-radius: 50%; animation: spin 1s linear infinite; margin: 40px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #results-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        #results-table th, #results-table td { text-align: left; padding: 14px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+        #results-table th { background-color: #f8f9fa; color: var(--text-secondary); font-weight: 600; }
+        .profit { color: var(--accent-green); font-weight: 600; }
+        .loss { color: var(--accent-red); font-weight: 600; }
+        .summary, .usage-stats, .analysis-section {
+            margin-top: 25px;
+            padding: 20px;
+            background-color: #f8f9fc;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+        .summary { text-align: center; font-size: 1.1em; font-weight: 600; }
+        .usage-stats { text-align: center; font-size: 1em; background-color: #e9f5ff; }
+        .advice-item, .diversification-item {
+            padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 5px solid;
+        }
+        .advice-item { background-color: #e9f5ff; border-color: #007bff; white-space: pre-wrap; font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace; }
+        .diversification-item { background-color: #fff4e5; border-color: #ff9800; font-weight: 500; }
+        .diversification-item.good { background-color: #e8f5e9; border-color: #4caf50; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1><i class="fas fa-chart-pie"></i> ROBUST Portfolio Analyser</h1>
+    <form id="portfolioForm">
+        <div id="stock-list">
+            <div class="stock-entry">
+                <div class="form-group"><label>Ticker</label><input type="text" class="ticker-input" placeholder="RELIANCE.NS" required value="RELIANCE.NS"></div>
+                <div class="form-group"><label>Quantity</label><input type="number" class="quantity-input" placeholder="10" required value="10"></div>
+                <div class="form-group"><label>Avg. Price</label><input type="number" class="price-input" step="0.01" placeholder="2850.50" required value="2800"></div>
+                <button type="button" class="remove-btn" style="visibility: hidden;">×</button>
+            </div>
+        </div>
+        <div class="action-buttons">
+            <button type="button" id="addStockBtn"><i class="fas fa-plus"></i> Add Stock</button>
+            <button type="submit" id="analyseBtn"><i class="fas fa-search-dollar"></i> Analyse Portfolio</button>
+        </div>
+    </form>
+    
+    <div id="output-block">
+        <div id="usage-container"></div>
+        <div id="loader-container"><div class="loader"></div></div>
+        <div id="results-container"></div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const portfolioForm = document.getElementById('portfolioForm');
+        const stockList = document.getElementById('stock-list');
+        const outputBlock = document.getElementById('output-block');
+        const loaderContainer = document.getElementById('loader-container');
+        const resultsContainer = document.getElementById('results-container');
+        const usageContainer = document.getElementById('usage-container');
+        document.getElementById('addStockBtn').addEventListener('click', () => {
+            const div = document.createElement('div');
+            div.className = 'stock-entry';
+            div.innerHTML = `<div class="form-group"><label>Ticker</label><input type="text" class="ticker-input" placeholder="TCS.NS" required></div><div class="form-group"><label>Quantity</label><input type="number" class="quantity-input" placeholder="50" required></div><div class="form-group"><label>Avg. Price</label><input type="number" class="price-input" step="0.01" placeholder="4010.00" required></div><button type="button" class="remove-btn">×</button>`;
+            stockList.appendChild(div);
+        });
+        stockList.addEventListener('click', (event) => {
+            if (event.target.classList.contains('remove-btn') && stockList.children.length > 1) {
+                event.target.closest('.stock-entry').remove();
+            }
+        });
+        portfolioForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const analyseBtn = document.getElementById('analyseBtn');
+            analyseBtn.disabled = true;
+            analyseBtn.textContent = 'Analysing...';
+            const portfolioData = Array.from(document.querySelectorAll('.stock-entry')).map(entry => ({
+                ticker: entry.querySelector('.ticker-input').value.toUpperCase(),
+                quantity: parseFloat(entry.querySelector('.quantity-input').value),
+                averagePrice: parseFloat(entry.querySelector('.price-input').value)
+            }));
+            outputBlock.style.display = 'block';
+            resultsContainer.innerHTML = '';
+            usageContainer.innerHTML = '';
+            loaderContainer.style.display = 'block';
+            try {
+                const response = await fetch('/analyse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ portfolio: portfolioData, risk_profile: "Moderate" })
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                loaderContainer.style.display = 'none';
+                displayResults(data);
+            } catch (error) {
+                loaderContainer.style.display = 'none';
+                resultsContainer.innerHTML = `<div class="diversification-item" style="background-color: #f8d7da; border-color: var(--accent-red); font-weight: 500;">Error: ${error.message}</div>`;
+            } finally {
+                analyseBtn.disabled = false;
+                analyseBtn.innerHTML = '<i class="fas fa-search-dollar"></i> Analyse Portfolio';
+            }
+        });
+        const displayResults = (data) => {
+            const usage = data.usage_stats;
+            usageContainer.innerHTML = `<div class="usage-stats">📈 Portfolios Analyzed: <strong>${usage.portfolios_analyzed}</strong> | 💰 Total Bill: <strong>₹${usage.total_bill}</strong></div>`;
+            const results = data.table_data;
+            let totalInvestment = 0, totalCurrentValue = 0;
+            const tableRows = results.map(stock => {
+                totalInvestment += stock.investment;
+                totalCurrentValue += stock.currentValue;
+                const pnlClass = stock.pnl >= 0 ? 'profit' : 'loss';
+                const changeClass = stock.change_percent >= 0 ? 'profit' : 'loss';
+                return `<tr><td><b>${stock.ticker}</b></td><td>${stock.quantity}</td><td>₹${stock.averagePrice.toFixed(2)}</td><td>₹${stock.investment.toFixed(2)}</td><td>₹${stock.currentPrice.toFixed(2)}</td><td>₹${stock.currentValue.toFixed(2)}</td><td class="${pnlClass}">₹${stock.pnl.toFixed(2)}</td><td class="${changeClass}">${stock.change_percent.toFixed(2)}%</td></tr>`;
+            }).join('');
+            const totalPnl = totalCurrentValue - totalInvestment;
+            const totalPnlClass = totalPnl >= 0 ? 'profit' : 'loss';
+            const diversificationClass = data.diversification_advice.includes('Warning') ? 'diversification-item' : 'diversification-item good';
+            const adviceHtml = data.advice.map(item => `<div class="advice-item">${item}</div>`).join('');
+            resultsContainer.innerHTML = `
+                <h3><i class="fas fa-wallet"></i> Your Holdings</h3>
+                <div class="analysis-section" style="padding:0; background:none; border:none;">
+                    <table id="results-table">
+                        <thead><tr><th>Ticker</th><th>Qty</th><th>Avg. Buy</th><th>Invested</th><th>Current Price</th><th>Current Value</th><th>P&L</th><th>Day's Change</th></tr></thead>
+                        <tbody>${tableRows}</tbody>
+                    </table>
+                </div>
+                <div class="summary">Total Investment: ₹${totalInvestment.toFixed(2)} | Current Value: ₹${totalCurrentValue.toFixed(2)} | Overall P&L: <span class="${totalPnlClass}">₹${totalPnl.toFixed(2)}</span></div>
+                
+                <div class="analysis-section">
+                    <h3><i class="fas fa-shield-alt"></i> Diversification Check</h3>
+                    <div class="${diversificationClass}">${data.diversification_advice}</div>
+                </div>
+
+                <div class="analysis-section">
+                    <h3><i class="fas fa-robot"></i> ROBUST Agent Advice</h3>
+                    ${adviceHtml}
+                </div>
+            `;
+        };
+    });
+</script>
+</body>
+</html>
