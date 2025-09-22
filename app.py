@@ -1,5 +1,6 @@
+import os
+import requests
 import pandas as pd
-import yfinance as yf
 from flask import Flask, render_template, request, jsonify
 from collections import defaultdict
 
@@ -7,66 +8,59 @@ from collections import defaultdict
 app = Flask(__name__)
 
 # --- In-Memory Usage & Billing Tracker ---
-# NOTE: In a real-world application, this would be a database.
-usage_tracker = {
-    "portfolios_analyzed": 0,
-    "advice_generated": 0,
-    "total_bill": 0.0
-}
+usage_tracker = {"portfolios_analyzed": 0, "advice_generated": 0, "total_bill": 0.0}
 COST_PER_PORTFOLIO = 2.00
 COST_PER_ADVICE = 0.25
 
-# --- 1. Live Data Service (PathwayClient) ---
+# --- 1. MODIFIED Live Data Service (Now using Alpha Vantage) ---
 class PathwayClient:
-    @staticmethod
-    def _calculate_rsi(data: pd.Series, window: int = 14) -> int:
-        if data.empty or len(data) < window + 1: return 50
-        delta = data.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-        if loss.iloc[-1] == 0: return 100
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        final_rsi = rsi.iloc[-1]
-        if pd.isna(final_rsi): return 50
-        return int(final_rsi)
+    def __init__(self):
+        # IMPORTANT: Reads the API key from the environment variables you set on Render
+        self.api_key = os.environ.get('ALPHA_VANTAGE_API_KEY')
+        if not self.api_key:
+            raise ValueError("ALPHA_VANTAGE_API_KEY environment variable not set.")
+        self.base_url = 'https://www.alphavantage.co/query'
 
     def fetch_live_stock_data(self, tickers: list[str]) -> dict:
-        print(f"\n[Pathway] Connecting to live market feed for: {tickers}...")
+        print(f"\n[Pathway] Connecting to Alpha Vantage for: {tickers}...")
         live_data = {}
-        try:
-            session = yf.Ticker("MSFT").session
-            ticker_data = yf.Tickers(tickers, session=session)
-            history = yf.download(tickers, period="3mo", progress=False, session=session)
-            for ticker_str in tickers:
-                ticker = ticker_data.tickers[ticker_str]
-                info = ticker.info
-                if not info or 'currentPrice' not in info or info.get('currentPrice') is None:
-                    print(f"[Pathway] WARNING: Could not fetch live info for {ticker_str}.")
-                    continue
-                try:
-                    ticker_history = history[('Close', ticker_str)] if len(tickers) > 1 else history['Close']
-                except KeyError:
-                    print(f"[Pathway] WARNING: Could not fetch historical data for {ticker_str}.")
-                    continue
-                rsi = self._calculate_rsi(ticker_history)
-                live_data[ticker_str] = {
-                    "price": info.get('currentPrice', 0),
-                    "change_percent": ((info.get('currentPrice', 0) - info.get('previousClose', 1)) / info.get('previousClose', 1)) * 100,
-                    "sector": info.get('sector', 'N/A'),
-                    "50d_ma": info.get('fiftyDayAverage', 0),
-                    "200d_ma": info.get('twoHundredDayAverage', 0),
-                    "rsi": rsi,
-                    "volume": info.get('volume', 0),
-                    "avg_vol": info.get('averageVolume', 0)
-                }
-            print("[Pathway] Live data received successfully.")
-            return live_data
-        except Exception as e:
-            print(f"[Pathway] ERROR: Failed to fetch live data. Error: {e}")
-            return {}
+        
+        # Alpha Vantage's free tier is limited, so we fetch one ticker at a time.
+        for ticker_str in tickers:
+            try:
+                # API Call 1: Get the global quote (price, change, etc.)
+                quote_params = {'function': 'GLOBAL_QUOTE', 'symbol': ticker_str, 'apikey': self.api_key}
+                quote_response = requests.get(self.base_url, params=quote_params)
+                quote_response.raise_for_status()
+                quote_data = quote_response.json().get('Global Quote', {})
 
-# --- 2. Upgraded Analysis Engine ---
+                if not quote_data:
+                    print(f"[Pathway] WARNING: No quote data found for {ticker_str}. It might be an invalid ticker.")
+                    continue
+
+                # API Call 2: Get the company overview (for sector info)
+                overview_params = {'function': 'OVERVIEW', 'symbol': ticker_str, 'apikey': self.api_key}
+                overview_response = requests.get(self.base_url, params=overview_params)
+                overview_response.raise_for_status()
+                overview_data = overview_response.json()
+
+                # Extract and format the data
+                change_percent_str = quote_data.get('10. change percent', '0%').replace('%', '')
+                
+                live_data[ticker_str] = {
+                    "price": float(quote_data.get('05. price', 0)),
+                    "change_percent": float(change_percent_str),
+                    "sector": overview_data.get('Sector', 'N/A'),
+                }
+                print(f"[Pathway] Successfully fetched data for {ticker_str}.")
+            except requests.exceptions.RequestException as e:
+                print(f"[Pathway] ERROR: Network or API error for {ticker_str}. Error: {e}")
+            except (KeyError, ValueError) as e:
+                print(f"[Pathway] ERROR: Could not parse data for {ticker_str}. It might be an invalid ticker or an API limit issue. Error: {e}")
+        
+        return live_data
+
+# --- 2. SIMPLIFIED Analysis Engine ---
 class AnalysisEngine:
     def generate_advice(self, portfolio: list[dict], live_data: dict, risk_profile: str) -> list[str]:
         advice_list = []
@@ -76,57 +70,31 @@ class AnalysisEngine:
             
             data = live_data[ticker]
             pnl_percent = ((data["price"] - stock["avg_price"]) / stock["avg_price"]) * 100
-            score = 0
-            reasons = []
-
-            if data.get("price", 0) < data.get("50d_ma", 0):
-                score -= 2
-                reasons.append("it's trading below its 50-Day trendline")
-            if data.get("rsi", 100) > 70:
-                score -= 1
-                reasons.append("it's in the overbought zone (RSI > 70)")
-            elif data.get("rsi", 0) < 30:
-                score += 1
-                reasons.append("it's in the oversold zone (RSI < 30)")
-            if data.get("change_percent", 0) < -2.0 and data.get("volume", 0) > data.get("avg_vol", 0) * 1.5:
-                score -= 2
-                reasons.append("it's falling on high volume")
-            elif data.get("change_percent", 0) < -2.0:
-                score -= 1
-                reasons.append("it's facing selling pressure today")
-
-            advice, final_reason = self._get_final_advice(score, pnl_percent, risk_profile, reasons, data)
+            
+            # NOTE: Advice logic is simplified due to Alpha Vantage free tier limitations.
+            # It no longer uses RSI or Moving Averages.
+            advice, final_reason = self._get_final_advice(pnl_percent, data.get('change_percent', 0))
             
             status_icon = "🟢" if pnl_percent > 2 else "🔴" if pnl_percent < -2 else "🔵"
             advice_text = f"{status_icon} **{ticker}**\n"
             advice_text += f"   - Your P/L: {pnl_percent:.2f}%\n"
+            advice_text += f"   - Day's Change: {data.get('change_percent', 0):.2f}%\n"
             advice_text += f"   - **ADVICE: {advice}**\n"
             advice_text += f"   - **Reason:** {final_reason}"
             advice_list.append(advice_text)
         return advice_list
 
-    def _get_final_advice(self, score: int, pnl: float, risk: str, reasons: list[str], live_stock_data: dict) -> tuple[str, str]:
-        reason_str = ", and ".join(reasons) if reasons else "the current indicators are neutral."
-
-        if risk == "Conservative": score -= 1
-        if risk == "Aggressive": score += 1
-        
-        is_healthy_long_term = live_stock_data.get('price', 0) > live_stock_data.get('200d_ma', 0)
-        is_not_overbought = live_stock_data.get('rsi', 100) < 65
-
-        if score >= 1 and is_healthy_long_term and is_not_overbought and pnl < 15:
-            return "Consider buying more (Averaging)", "The stock shows positive short-term signals while being in a healthy long-term uptrend and not overbought."
-
-        if score <= -3:
-            return "Strongly consider selling", reason_str
-        elif score <= -1:
-            return "Consider reducing position", reason_str
-        elif score >= 2 and pnl < 0:
-            return "Consider holding for recovery", reason_str
-        elif score >= 2:
-            return "Hold for potential upside", reason_str
+    def _get_final_advice(self, pnl: float, change_percent: float) -> tuple[str, str]:
+        if change_percent > 2.0 and pnl > 5.0:
+            return "Hold for potential upside", "The stock is performing well today and you have a good profit."
+        elif change_percent < -2.0 and pnl > 0:
+            return "Consider taking some profit", "The stock is facing selling pressure today; locking in gains could be wise."
+        elif change_percent < -2.0 and pnl < 0:
+            return "Hold and Monitor", "The stock is down today; avoid selling in a panic."
+        elif pnl < -15.0:
+            return "Review Position", "Your position has a significant loss. Re-evaluate the investment."
         else:
-            return "Hold and Monitor", reason_str
+            return "Hold and Monitor", "The current indicators are neutral."
 
     def analyse_diversification(self, portfolio: list[dict], live_data: dict) -> str:
         sector_values = defaultdict(float)
@@ -145,28 +113,34 @@ class AnalysisEngine:
             if percentage > 40.0:
                 highly_concentrated_sectors.append(f"**{sector}** ({percentage:.1f}%)")
         if highly_concentrated_sectors:
-            return f"⚠️ **Diversification Warning:** Your portfolio is heavily concentrated in: {', '.join(highly_concentrated_sectors)}. Consider diversifying into other sectors to reduce risk."
+            return f"⚠️ **Diversification Warning:** Your portfolio is heavily concentrated in: {', '.join(highly_concentrated_sectors)}."
         else:
-            return "✅ **Good Diversification:** Your portfolio appears to be well-diversified across different sectors."
+            return "✅ **Good Diversification:** Your portfolio appears to be well-diversified."
 
-# --- Instantiate our core components ---
-pathway = PathwayClient()
-engine = AnalysisEngine()
+# --- Instantiate Core Components ---
+try:
+    pathway = PathwayClient()
+    engine = AnalysisEngine()
+except ValueError as e:
+    print(f"FATAL ERROR: {e}")
+    pathway = None
+    engine = None
 
-# --- 3. Flask Routes ---
+# --- 3. Flask Routes (Modified to handle initialization error) ---
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/analyse', methods=['POST'])
 def analyse_portfolio():
+    if not pathway or not engine:
+        return jsonify({"error": "Server is not configured. Missing API Key."}), 503
+
     try:
         data = request.get_json()
         portfolio_data = data.get('portfolio')
-        if not portfolio_data:
-            return jsonify({"error": "Portfolio data is missing."}), 400
+        if not portfolio_data: return jsonify({"error": "Portfolio data is missing."}), 400
 
-        # Update Usage and Billing
         num_advice_items = len(portfolio_data)
         current_bill = COST_PER_PORTFOLIO + (num_advice_items * COST_PER_ADVICE)
         usage_tracker["portfolios_analyzed"] += 1
@@ -175,10 +149,10 @@ def analyse_portfolio():
         
         tickers_to_fetch = [stock['ticker'] for stock in portfolio_data]
         live_market_data = pathway.fetch_live_stock_data(tickers_to_fetch)
-        if not live_market_data:
-            return jsonify({"error": "Could not fetch live market data for the provided tickers."}), 500
 
-        # Generate Analysis
+        if not live_market_data:
+            return jsonify({"error": "Could not fetch market data. Check ticker symbols or API limits."}), 500
+
         table_results, analysis_portfolio = [], []
         for stock in portfolio_data:
             ticker = stock['ticker']
@@ -196,16 +170,15 @@ def analyse_portfolio():
             "table_data": table_results,
             "advice": generated_advice,
             "diversification_advice": diversification_advice,
-            "usage_stats": {
-                "portfolios_analyzed": usage_tracker["portfolios_analyzed"],
-                "total_bill": f'{usage_tracker["total_bill"]:.2f}'
-            }
+            "usage_stats": {"portfolios_analyzed": usage_tracker["portfolios_analyzed"], "total_bill": f'{usage_tracker["total_bill"]:.2f}'}
         })
-
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred during analysis: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 # --- 4. Main Execution Block ---
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0')
+    if pathway:
+        app.run(debug=True, host='0.0.0.0')
+    else:
+        print("Application cannot start due to missing API key.")
